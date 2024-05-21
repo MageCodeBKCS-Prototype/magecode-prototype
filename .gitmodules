@@ -1,0 +1,9 @@
+[submodule "Code-Processing-Service"]
+	path = Code-Processing-Service
+	url = git@github.com:MageCodeBKCS-Prototype/Code-Processing-Service.git
+[submodule "Api"]
+	path = Api
+	url = git@github.com:MageCodeBKCS-Prototype/Api.git
+[submodule "Web-UI"]
+	path = Web-UI
+	url = git@github.com:MageCodeBKCS-Prototype/Web-UI.git
