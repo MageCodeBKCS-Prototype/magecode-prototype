@@ -1,0 +1,120 @@
+version: '3.9'
+services:
+  redis:
+    container_name: redis
+    image: redis
+    ports:
+      - "6379:6379"
+
+  db:
+    container_name: db
+    image: mariadb:11
+    volumes:
+      - magecode-db-data:/var/lib/mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: dolos
+    ports:
+      - "3306:3306"
+
+  code_processing_api:
+    container_name: code_processing_api
+    build:
+      context: .
+      dockerfile: Code-Processing-Service/Dockerfile
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./unzip_uploaded_code:/dolos/unzip_uploaded_code
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  celery_machine_code_inference:
+    container_name: celery_machine_code_inference
+    build:
+      context: .
+      dockerfile: Code-Processing-Service/Dockerfile
+    command: celery -A src.celery_task.machine_detection_inference worker -Q inference --pool=threads --loglevel=DEBUG
+    volumes:
+      - ./models:/models
+      - ./unzip_uploaded_code:/dolos/unzip_uploaded_code
+    depends_on:
+      - redis
+      - code_processing_api
+
+  celery_worker:
+    container_name: celery_worker
+    build:
+      context: .
+      dockerfile: Code-Processing-Service/Dockerfile
+    command: celery -A src.celery_task.code_processing worker --pool=threads --loglevel=DEBUG
+    volumes:
+      - ./models:/models
+      - ./unzip_uploaded_code:/dolos/unzip_uploaded_code
+    depends_on:
+      - redis
+      - code_processing_api
+
+  flower:
+    container_name: flower
+    build:
+      context: .
+      dockerfile: Code-Processing-Service/Dockerfile
+    command: celery --broker=redis://redis:6379/0 --result-backend=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5556:5555"
+    depends_on:
+      - code_processing_api
+      - redis
+      - celery_machine_code_inference
+      - celery_worker
+
+  api:
+    build: Api
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails db:prepare && bundle exec rails s -p 3000 -b '0.0.0.0'"
+    volumes:
+      - magecode-api-storage:/dolos/storage
+      - /tmp:/tmp
+      - ./unzip_uploaded_code:/dolos/unzip_uploaded_code
+      #- .:/dolos
+    ports:
+      - "3000:3000"
+    environment:
+      DOLOS_API_DATABASE_USERNAME: root
+      DOLOS_API_DATABASE_PASSWORD: dolos
+      DOLOS_API_DATABASE_HOST: db
+    depends_on:
+      - worker
+
+  worker:
+    build: Api
+    command: bash -c "bundle exec rails jobs:work"
+    volumes:
+      - magecode-api-storage:/dolos/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/tmp
+      - ./unzip_uploaded_code:/dolos/unzip_uploaded_code
+      #- .:/dolos
+    environment:
+      DOLOS_API_DATABASE_USERNAME: root
+      DOLOS_API_DATABASE_PASSWORD: dolos
+      DOLOS_API_DATABASE_HOST: db
+    depends_on:
+      - db
+
+  web:
+     build:
+       context: Web-UI
+     ports:
+       - "8080:8080"
+     environment:
+       VITE_HOST: 0.0.0.0
+       VITE_PORT: 8080
+       VITE_API_URL: http://api:3000
+       VITE_MODE: server
+     depends_on:
+       - api
+
+volumes:
+  magecode-db-data:
+  magecode-api-storage:
